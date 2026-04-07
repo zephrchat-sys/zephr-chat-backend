@@ -71,6 +71,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if settings.BOT_TOKEN == "dev" else None,
 )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for Telegram Mini Apps
@@ -79,6 +80,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
 
 # ── Auth Helper ───────────────────────────────────────────────────────────────
 def get_telegram_user(request: Request) -> dict:
@@ -270,6 +272,53 @@ async def submit_rating(
         )
     await db.commit()
     return {"ok": True}
+
+
+@app.post("/api/upload-media")
+async def upload_media(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Handle media uploads and broadcast to peer."""
+    tg_user = get_telegram_user(request)
+    body = await request.json()
+    
+    session_id = body.get("session_id")
+    file_data = body.get("file_data")  # base64 data URL
+    file_type = body.get("file_type", "image/jpeg")
+    
+    if not session_id or not file_data:
+        raise HTTPException(status_code=400, detail="session_id and file_data required")
+    
+    # Get session to find peer
+    session_data = await match_engine.get_session(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    user_id = tg_user["id"]
+    u1 = int(session_data.get("user1_id", 0))
+    u2 = int(session_data.get("user2_id", 0))
+    
+    if user_id not in (u1, u2):
+        raise HTTPException(status_code=403, detail="Not in this session")
+    
+    # Determine peer
+    peer_id = u2 if user_id == u1 else u1
+    
+    # Send media message to peer via pub/sub
+    await match_engine.redis.publish(
+        f"user:{peer_id}",
+        json.dumps({
+            "type": "message",
+            "session_id": session_id,
+            "media_type": file_type,
+            "media_data": file_data,
+            "timestamp": asyncio.get_event_loop().time()
+        })
+    )
+    
+    log.info(f"Media sent from {user_id} to {peer_id} in session {session_id}")
+    return {"ok": True, "message": "Media sent"}
 
 
 # ── WebSocket Manager ─────────────────────────────────────────────────────────

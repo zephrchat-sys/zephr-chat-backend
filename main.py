@@ -71,14 +71,18 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if settings.BOT_TOKEN == "dev" else None,
 )
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten in production to your frontend domain
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_origins=[
+        "https://zephr-chat.vercel.app",   # Your exact frontend URL
+        "https://*.vercel.app",            # Safety for vercel subdomains
+        "http://localhost:3000",           # For local testing
+        "*"                                # Temporary for debugging (remove later)
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ── Auth Helper ───────────────────────────────────────────────────────────────
 def get_telegram_user(request: Request) -> dict:

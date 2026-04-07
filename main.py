@@ -73,6 +73,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
+<<<<<<< HEAD
     allow_origins=[
         "https://zephr-chat.vercel.app",   # Your exact frontend URL
         "https://*.vercel.app",            # Safety for vercel subdomains
@@ -81,7 +82,13 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_methods=["*"],
+=======
+    allow_origins=["*"],  # Allow all origins for Telegram Mini Apps
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+>>>>>>> 2583c69 (Fix CORS configuration for Telegram Mini Apps)
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # ── Auth Helper ───────────────────────────────────────────────────────────────

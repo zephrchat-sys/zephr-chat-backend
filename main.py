@@ -307,7 +307,7 @@ async def upload_media(
     
     # Send media message to peer via pub/sub
     await match_engine.redis.publish(
-        f"zephr:user:{peer_id}",
+        f"user:{peer_id}",
         json.dumps({
             "type": "message",
             "session_id": session_id,

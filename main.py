@@ -22,6 +22,7 @@ from config import settings
 from database import get_db, init_db, get_or_create_user, User, Report, ChatSession
 from matching import engine as match_engine, QueueEntry
 from moderation import moderator
+import bot as telegram_bot
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -56,13 +57,42 @@ async def lifespan(app: FastAPI):
     await init_db()
     await match_engine.connect()
     await moderator.setup()
+    
+    # Start Telegram bot
+    if telegram_bot.bot:
+        await telegram_bot.setup_bot()
+        if settings.WEBHOOK_URL:
+            webhook_url = f"{settings.WEBHOOK_URL}/bot/webhook"
+            await telegram_bot.bot.set_webhook(
+                url=webhook_url,
+                drop_pending_updates=True
+            )
+            log.info(f"✅ Telegram bot webhook set to {webhook_url}")
+        else:
+            log.warning("⚠️ WEBHOOK_URL not set - bot running in dev mode")
+    
     log.info("🚀 zephr.chat backend started")
     yield
+    
     # Shutdown
+    if telegram_bot.bot:
+        await telegram_bot.bot.delete_webhook()
     await match_engine.disconnect()
     await moderator.teardown()
     log.info("👋 zephr.chat backend stopped")
+    
+    # ── Telegram Bot Webhook ──────────────────────────────────────────────────────
+@app.post("/bot/webhook")
+async def telegram_webhook(request: Request):
 
+    if not telegram_bot.bot:
+        raise HTTPException(status_code=503, detail="Bot not configured")
+    
+    update_data = await request.json()
+    from aiogram.types import Update
+    update = Update(**update_data)
+    await telegram_bot.dp.feed_update(telegram_bot.bot, update)
+    return {"ok": True}
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(

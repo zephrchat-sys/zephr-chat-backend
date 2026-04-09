@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        
+    class Settings:
+    # ... other settings ...
+    WEBHOOK_URL: str = os.getenv("WEBHOOK_URL", "")  # Your Railway URL
+    WEBHOOK_PATH: str = "/bot/webhook"
 
 
 settings = Settings()

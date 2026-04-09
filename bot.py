@@ -221,25 +221,53 @@ async def cmd_vip(event: Message | CallbackQuery):
 @router.callback_query(F.data.in_(["vip_trial", "vip_monthly", "vip_quarterly"]))
 async def vip_payment(callback: CallbackQuery):
     plan = callback.data.replace("vip_", "")
-
+    
+    # Handle free trial directly without payment
+    if plan == "trial":
+        async with AsyncSessionLocal() as db:
+            user = await get_or_create_user(
+                db, 
+                user_id=callback.from_user.id,
+                first_name=callback.from_user.first_name,
+                username=callback.from_user.username
+            )
+            
+            # Check if already had trial
+            if user.had_vip_trial:
+                await callback.answer("⚠️ You've already used your free trial!", show_alert=True)
+                return
+            
+            # Grant 3-day trial
+            from datetime import datetime, timedelta
+            new_expiry = datetime.utcnow() + timedelta(days=3)
+            
+            await db.execute(
+                update(User).where(User.id == user.id).values(
+                    is_vip=True,
+                    vip_expires_at=new_expiry,
+                    had_vip_trial=True
+                )
+            )
+            await db.commit()
+            
+            await callback.message.answer(
+                "🎉 <b>Free Trial Activated!</b>\n\n"
+                "You now have VIP access for 3 days:\n"
+                "• ⚡ Priority matching queue\n"
+                "• 🌍 Gender & country filters\n"
+                "• 🌐 Auto-translate messages\n"
+                "• 🎨 Custom themes\n\n"
+                f"Expires: {new_expiry.strftime('%B %d, %Y')}"
+            )
+            await callback.answer()
+            return
+    
+    # For paid plans, continue with regular payment flow...
     prices_map = {
-        "trial": (1, "3-Day VIP Trial"),        # $0.01 placeholder for trial
-        "monthly": (499, "VIP Monthly"),
-        "quarterly": (999, "VIP 3 Months"),
+        "monthly": (385, "VIP Monthly", "One month of VIP access"),
+        "quarterly": (770, "VIP 3 Months", "Three months of VIP"),
     }
-    amount, label = prices_map[plan]
-
-    await bot.send_invoice(
-        chat_id=callback.from_user.id,
-        title=f"zephr.chat {label}",
-        description="Unlock priority queue, gender/country filters, auto-translate, and more.",
-        payload=f"vip_{plan}_{callback.from_user.id}",
-        currency="USD",
-        prices=[LabeledPrice(label=label, amount=amount)],
-        provider_token="",  # Empty = Telegram Stars payment
-        start_parameter="vip",
-    )
-    await callback.answer()
+    # ... rest of payment code
 
 
 @router.pre_checkout_query()

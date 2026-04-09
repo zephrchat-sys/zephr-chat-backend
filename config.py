@@ -39,15 +39,14 @@ class Settings(BaseSettings):
     # ── Rate Limiting ─────────────────────────────────────────
     RATE_LIMIT_MESSAGES: int = 30    # per minute
     RATE_LIMIT_MATCHES: int = 20     # per hour
+    
+    # ── Webhook (for Telegram bot) ────────────────────────────
+    WEBHOOK_URL: str = os.getenv("WEBHOOK_URL", "")  # Your Railway URL
+    WEBHOOK_PATH: str = "/bot/webhook"
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-        
-    class Settings:
-    # ... other settings ...
-    WEBHOOK_URL: str = os.getenv("WEBHOOK_URL", "")  # Your Railway URL
-    WEBHOOK_PATH: str = "/bot/webhook"
 
 
 settings = Settings()

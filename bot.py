@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
+from aiogram.client.default import DefaultBotProperties
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     LabeledPrice, PreCheckoutQuery, SuccessfulPayment, WebAppInfo,
@@ -22,7 +23,11 @@ from database import AsyncSessionLocal, User, VIPPayment, get_or_create_user
 
 log = logging.getLogger("zephr.bot")
 
-bot = None if settings.BOT_TOKEN == 'dev' else Bot(token=settings.BOT_TOKEN, parse_mode=ParseMode.HTML)
+# Fixed for aiogram 3.7+: use DefaultBotProperties instead of parse_mode parameter
+bot = None if settings.BOT_TOKEN == 'dev' else Bot(
+    token=settings.BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)

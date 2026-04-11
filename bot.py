@@ -32,7 +32,6 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def main_keyboard() -> InlineKeyboardMarkup:

@@ -2,6 +2,7 @@
 zephr.chat — Configuration
 All settings loaded from environment variables (.env file)
 """
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -10,7 +11,7 @@ class Settings(BaseSettings):
     # ── Telegram ──────────────────────────────────────────────
     BOT_TOKEN: str                          # From BotFather
     WEBHOOK_URL: Optional[str] = None       # e.g. https://yourdomain.com
-    WEBHOOK_PATH: str = "/bot/webhook"
+    WEBHOOK_PATH: str = "/webhook"
     WEBAPP_URL: str = "https://yourdomain.com"  # Your frontend URL
 
     # ── Database ──────────────────────────────────────────────

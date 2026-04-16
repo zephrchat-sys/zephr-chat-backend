@@ -80,10 +80,10 @@ async def lifespan(app: FastAPI):
     await match_engine.disconnect()
     await moderator.teardown()
     log.info("👋 zephr.chat backend stopped")
-
     
-# ── App ───────────────────────────────────────────────────────────────────────
 
+
+# ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="zephr.chat API",
     version="1.0.0",
@@ -93,7 +93,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins for Telegram Mini Apps
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -103,7 +103,7 @@ app.add_middleware(
 # ── Telegram Bot Webhook ──────────────────────────────────────────────────────
 @app.post("/bot/webhook")
 async def telegram_webhook(request: Request):
-    """Handle incoming Telegram bot updates via webhook."""
+
     if not telegram_bot.bot:
         raise HTTPException(status_code=503, detail="Bot not configured")
     
@@ -112,6 +112,8 @@ async def telegram_webhook(request: Request):
     update = Update(**update_data)
     await telegram_bot.dp.feed_update(telegram_bot.bot, update)
     return {"ok": True}
+
+
 
 # ── Auth Helper ───────────────────────────────────────────────────────────────
 def get_telegram_user(request: Request) -> dict:

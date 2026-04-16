@@ -9,7 +9,7 @@ from sqlalchemy import (
     DateTime, Float, Text, Index, func
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from config import settings
 
@@ -66,6 +66,9 @@ class User(Base):
     referral_code = Column(String(16), unique=True, nullable=True)
     referred_by = Column(BigInteger, nullable=True)
     referral_count = Column(Integer, default=0)
+    
+    # VIP trial tracking
+    had_vip_trial: Mapped[bool] = mapped_column(Boolean, default=False)
 
     def is_vip_active(self) -> bool:
         if not self.is_vip:

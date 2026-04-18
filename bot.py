@@ -5,6 +5,7 @@ Run alongside the FastAPI server.
 """
 import asyncio
 import logging
+import secrets
 from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -243,7 +244,6 @@ async def vip_payment(callback: CallbackQuery):
                 return
             
             # Grant 3-day trial
-            from datetime import datetime, timedelta
             new_expiry = datetime.utcnow() + timedelta(days=3)
             
             await db.execute(
@@ -267,42 +267,132 @@ async def vip_payment(callback: CallbackQuery):
             await callback.answer()
             return
     
-    # For paid plans, continue with regular payment flow...
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PAID PLANS - TELEGRAM STARS (RECOMMENDED METHOD)
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    # Pricing: 1 Star ≈ $0.025 (2.5 cents)
+    # Monthly $4.99 ≈ 200 Stars
+    # Quarterly $9.99 ≈ 400 Stars
     prices_map = {
-        "monthly": (385, "VIP Monthly", "One month of VIP access"),
-        "quarterly": (770, "VIP 3 Months", "Three months of VIP"),
+        "monthly": (200, "VIP Monthly", "One month of VIP access"),
+        "quarterly": (400, "VIP 3 Months", "Three months of VIP - Save 33%!"),
     }
-    # ... rest of payment code
+    
+    if plan not in prices_map:
+        await callback.answer("Invalid plan selected", show_alert=True)
+        return
+    
+    stars, title, description = prices_map[plan]
+    prices = [LabeledPrice(label=title, amount=stars)]
+    
+    # Generate unique payload to track this payment
+    payload = f"vip_{plan}_{callback.from_user.id}_{secrets.token_hex(4)}"
+    
+    try:
+        await bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=title,
+            description=description,
+            payload=payload,
+            provider_token="",  # Empty string for Telegram Stars!
+            currency="XTR",     # XTR = Telegram Stars currency code
+            prices=prices,
+            start_parameter=f"vip_{plan}",
+        )
+        await callback.answer("💳 Payment invoice sent to you!")
+        log.info(f"Sent payment invoice to user {callback.from_user.id} for {plan}")
+    except Exception as e:
+        log.error(f"Failed to send invoice: {e}")
+        await callback.answer("❌ Failed to create payment. Please try again.", show_alert=True)
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ALTERNATIVE: STRIPE/TRADITIONAL PAYMENT PROCESSOR
+    # Uncomment this section and comment out the Telegram Stars section above
+    # if you want to use Stripe or another traditional payment processor
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 
+    # # Requires STRIPE_PROVIDER_TOKEN in settings
+    # prices_map = {
+    #     "monthly": (499, "VIP Monthly", "One month of VIP access"),
+    #     "quarterly": (999, "VIP 3 Months", "Three months of VIP - Save 33%!"),
+    # }
+    #
+    # if plan not in prices_map:
+    #     await callback.answer("Invalid plan selected", show_alert=True)
+    #     return
+    #
+    # cents, title, description = prices_map[plan]
+    # prices = [LabeledPrice(label=title, amount=cents)]
+    #
+    # payload = f"vip_{plan}_{callback.from_user.id}_{secrets.token_hex(4)}"
+    #
+    # try:
+    #     await bot.send_invoice(
+    #         chat_id=callback.from_user.id,
+    #         title=title,
+    #         description=description,
+    #         payload=payload,
+    #         provider_token=settings.STRIPE_PROVIDER_TOKEN,  # Your Stripe token
+    #         currency="USD",     # USD, EUR, GBP, etc.
+    #         prices=prices,
+    #         start_parameter=f"vip_{plan}",
+    #         # Optional: Add tips support
+    #         # max_tip_amount=1000,
+    #         # suggested_tip_amounts=[100, 200, 500],
+    #     )
+    #     await callback.answer("💳 Payment invoice sent to you!")
+    #     log.info(f"Sent payment invoice to user {callback.from_user.id} for {plan}")
+    # except Exception as e:
+    #     log.error(f"Failed to send invoice: {e}")
+    #     await callback.answer("❌ Failed to create payment. Please try again.", show_alert=True)
 
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery):
-    """Always approve pre-checkout — validation is in successful_payment."""
+    """
+    Always approve pre-checkout — validation is in successful_payment.
+    This is called before payment is actually charged.
+    """
     await query.answer(ok=True)
+    log.info(f"Pre-checkout approved for user {query.from_user.id}")
 
 
 @router.message(F.successful_payment)
 async def successful_payment(message: Message):
+    """
+    Handle successful payment and grant VIP access.
+    This is called after payment is completed and charged.
+    """
     payment: SuccessfulPayment = message.successful_payment
-    payload = payment.invoice_payload  # "vip_monthly_123456"
-
+    payload = payment.invoice_payload  # Format: "vip_monthly_123456_abc123"
+    
+    log.info(f"Payment successful: {payload}")
+    
+    # Extract plan from payload
     parts = payload.split("_")
-    plan = parts[1]  # monthly | quarterly | trial
+    if len(parts) < 2:
+        log.error(f"Invalid payload format: {payload}")
+        return
+        
+    plan = parts[1]  # "monthly" or "quarterly"
 
-    days_map = {"trial": 3, "monthly": 31, "quarterly": 92}
+    # Map plan to days
+    days_map = {"monthly": 31, "quarterly": 92}
     days = days_map.get(plan, 31)
 
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select, update
         result = await db.execute(select(User).where(User.id == message.from_user.id))
         user = result.scalar_one_or_none()
 
         if user:
+            # Calculate new expiry (extend if already VIP)
             new_expiry = max(
                 user.vip_expires_at or datetime.utcnow(),
                 datetime.utcnow()
             ) + timedelta(days=days)
 
+            # Grant VIP
             await db.execute(
                 update(User).where(User.id == user.id).values(
                     is_vip=True,
@@ -310,23 +400,31 @@ async def successful_payment(message: Message):
                 )
             )
 
-            # Record payment
+            # Record payment in database
             vp = VIPPayment(
                 user_id=user.id,
                 telegram_charge_id=payment.telegram_payment_charge_id,
-                provider_charge_id=payment.provider_payment_charge_id,
+                provider_charge_id=payment.provider_payment_charge_id or "",
                 amount=payment.total_amount,
                 currency=payment.currency,
                 plan=plan,
             )
             db.add(vp)
             await db.commit()
+            
+            log.info(f"VIP granted to user {user.id} until {new_expiry}")
 
     await message.answer(
         f"🎉 <b>Welcome to VIP!</b>\n\n"
         f"Your {plan} plan is now active until "
-        f"<b>{(datetime.utcnow() + timedelta(days=days)).strftime('%b %d, %Y')}</b>.\n\n"
-        f"Enjoy priority matching, exclusive filters, and more! 👑"
+        f"<b>{new_expiry.strftime('%B %d, %Y')}</b>.\n\n"
+        f"Enjoy:\n"
+        f"• ⚡ Priority matching queue\n"
+        f"• 🎯 Gender & country filters\n"
+        f"• 🌐 Auto-translate messages\n"
+        f"• 🏷 Username reveal option\n"
+        f"• 🚫 No ads\n\n"
+        f"Thanks for supporting zephr.chat! 👑"
     )
 
 
@@ -339,6 +437,148 @@ async def back_main(callback: CallbackQuery):
         reply_markup=main_keyboard()
     )
     await callback.answer()
+
+
+# ── VIP Auto-Renewal Reminders ───────────────────────────────────────────────
+
+async def check_vip_renewals():
+    """
+    Background task to check for expiring VIP subscriptions and send reminders.
+    Runs every 6 hours.
+    """
+    while True:
+        try:
+            log.info("Checking for VIP renewals...")
+            
+            async with AsyncSessionLocal() as db:
+                # Find users expiring in 3 days
+                three_days_from_now = datetime.utcnow() + timedelta(days=3)
+                three_days_end = three_days_from_now + timedelta(hours=6)
+                
+                result = await db.execute(
+                    select(User).where(
+                        User.is_vip == True,
+                        User.vip_expires_at >= three_days_from_now,
+                        User.vip_expires_at < three_days_end
+                    )
+                )
+                users_3day = result.scalars().all()
+                
+                # Find users expiring today
+                now = datetime.utcnow()
+                end_of_check = now + timedelta(hours=6)
+                
+                result = await db.execute(
+                    select(User).where(
+                        User.is_vip == True,
+                        User.vip_expires_at >= now,
+                        User.vip_expires_at < end_of_check
+                    )
+                )
+                users_today = result.scalars().all()
+                
+                # Send 3-day reminders
+                for user in users_3day:
+                    try:
+                        await bot.send_message(
+                            user.id,
+                            "⚠️ <b>VIP Expiring Soon</b>\n\n"
+                            f"Your VIP access expires in <b>3 days</b> "
+                            f"({user.vip_expires_at.strftime('%B %d, %Y')}).\n\n"
+                            "Renew now to keep enjoying:\n"
+                            "• ⚡ Priority matching\n"
+                            "• 🎯 Gender & country filters\n"
+                            "• 🌐 Auto-translate\n\n"
+                            "Tap below to renew 👇",
+                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(
+                                    text="🔄 Renew VIP",
+                                    callback_data="vip_info"
+                                )]
+                            ])
+                        )
+                        log.info(f"Sent 3-day reminder to user {user.id}")
+                    except Exception as e:
+                        log.error(f"Failed to send 3-day reminder to {user.id}: {e}")
+                
+                # Send expiry day reminders
+                for user in users_today:
+                    try:
+                        await bot.send_message(
+                            user.id,
+                            "⏰ <b>VIP Expiring Today!</b>\n\n"
+                            f"Your VIP access expires <b>today</b> "
+                            f"({user.vip_expires_at.strftime('%B %d at %I:%M %p')}).\n\n"
+                            "Don't lose access to:\n"
+                            "• ⚡ Priority matching\n"
+                            "• 🎯 Advanced filters\n"
+                            "• 🌐 Auto-translate\n\n"
+                            "Renew now with one tap! 👇",
+                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                [
+                                    InlineKeyboardButton(
+                                        text="📅 Monthly — $4.99",
+                                        callback_data="vip_monthly"
+                                    ),
+                                    InlineKeyboardButton(
+                                        text="🔥 3 Months — $9.99",
+                                        callback_data="vip_quarterly"
+                                    ),
+                                ]
+                            ])
+                        )
+                        log.info(f"Sent expiry reminder to user {user.id}")
+                    except Exception as e:
+                        log.error(f"Failed to send expiry reminder to {user.id}: {e}")
+                
+                log.info(f"Renewal check complete: {len(users_3day)} 3-day, {len(users_today)} expiring today")
+                
+        except Exception as e:
+            log.error(f"Error in renewal checker: {e}")
+        
+        # Wait 6 hours before next check
+        await asyncio.sleep(6 * 60 * 60)
+
+
+async def check_expired_vip():
+    """
+    Background task to disable VIP for expired users.
+    Runs every hour.
+    """
+    while True:
+        try:
+            log.info("Checking for expired VIP...")
+            
+            async with AsyncSessionLocal() as db:
+                # Find users with expired VIP
+                now = datetime.utcnow()
+                
+                result = await db.execute(
+                    select(User).where(
+                        User.is_vip == True,
+                        User.vip_expires_at < now
+                    )
+                )
+                expired_users = result.scalars().all()
+                
+                # Disable VIP for expired users
+                for user in expired_users:
+                    await db.execute(
+                        update(User).where(User.id == user.id).values(
+                            is_vip=False
+                        )
+                    )
+                    log.info(f"Disabled VIP for expired user {user.id}")
+                
+                if expired_users:
+                    await db.commit()
+                    log.info(f"Disabled VIP for {len(expired_users)} expired users")
+                
+        except Exception as e:
+            log.error(f"Error in expiry checker: {e}")
+        
+        # Wait 1 hour before next check
+        await asyncio.sleep(60 * 60)
 
 
 # ── Bot Startup ───────────────────────────────────────────────────────────────
@@ -359,7 +599,13 @@ async def setup_bot():
             web_app=WebAppInfo(url=settings.WEBAPP_URL)
         )
     )
+    
+    # Start background renewal and expiry checker tasks
+    asyncio.create_task(check_vip_renewals())
+    asyncio.create_task(check_expired_vip())
+    
     log.info("✅ Bot commands and menu button set")
+    log.info("✅ Background renewal tasks started")
 
 
 async def run_bot():

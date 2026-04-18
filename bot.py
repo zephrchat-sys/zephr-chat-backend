@@ -75,7 +75,20 @@ async def cmd_start(message: Message):
             username=message.from_user.username,
             language_code=message.from_user.language_code,
         )
-
+    
+        # Handle deep link parameters: /start PARAMETER
+        if message.text and len(message.text.split()) > 1:
+            param = message.text.split()[1]
+    
+        # NEW: Handle VIP deep link from web app
+        if param == "vip":
+            await cmd_vip(message)  # Show VIP options immediately
+            return
+    
+        # Handle referral links
+        if param.startswith("ref_") and not user.referred_by:
+            await _handle_referral(db, user, param[4:])
+        
         # Handle referral from deep link: /start ref_XXXXX
         if message.text and len(message.text.split()) > 1:
             ref_code = message.text.split()[1]

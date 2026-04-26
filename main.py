@@ -239,6 +239,37 @@ async def update_prefs(
     return {"ok": True}
 
 
+@app.put("/api/profile")
+async def update_profile(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update user's own profile (age, gender, country) - optional fields."""
+    tg_user = get_telegram_user(request)
+    body = await request.json()
+
+    from sqlalchemy import select, update
+    
+    # Build update dict with only provided fields
+    update_data = {}
+    if "age" in body:
+        age = body.get("age")
+        if age and isinstance(age, int) and 13 <= age <= 100:
+            update_data["age"] = age
+    if "gender" in body and body.get("gender"):
+        update_data["gender"] = body.get("gender")
+    if "country" in body and body.get("country"):
+        update_data["country"] = body.get("country")
+    
+    if update_data:
+        await db.execute(
+            update(User).where(User.id == tg_user["id"]).values(**update_data)
+        )
+        await db.commit()
+    
+    return {"ok": True}
+
+
 @app.post("/api/report")
 async def submit_report(
     request: Request,

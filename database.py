@@ -54,6 +54,11 @@ class User(Base):
     created_at = Column(DateTime, default=func.now())
     last_seen = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    # User's own profile (optional)
+    age = Column(Integer, nullable=True)                # User's age
+    gender = Column(String(16), nullable=True)          # User's gender
+    country = Column(String(64), nullable=True)         # User's country
+
     # Filters (saved preferences)
     pref_language = Column(String(8), default="any")
     pref_age_group = Column(String(16), default="any")

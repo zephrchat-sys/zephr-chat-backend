@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies (cache this layer)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+RUN pip install --no-cache-dir --upgrade pip setuptools==69.5.1 wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code

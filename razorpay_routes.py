@@ -72,8 +72,10 @@ async def create_order(request: OrderRequest):
                 detail=f"Invalid plan: {request.plan}"
             )
         
-        # Generate unique receipt ID
-        receipt_id = f"vip_{request.plan}_{request.user_id}_{int(datetime.utcnow().timestamp())}_{secrets.token_hex(4)}"
+        # Generate unique receipt ID (max 40 chars for Razorpay)
+        timestamp = int(datetime.utcnow().timestamp())
+        plan_code = 'm' if request.plan == 'monthly' else 'q'
+        receipt_id = f"{request.user_id}_{plan_code}_{timestamp}_{secrets.token_hex(3)}"
         
         # Create order data
         order_data = {

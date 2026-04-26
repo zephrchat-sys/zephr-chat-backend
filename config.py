@@ -14,6 +14,15 @@ class Settings(BaseSettings):
     WEBHOOK_PATH: str = "/webhook"
     WEBAPP_URL: str = "https://yourdomain.com"  # Your frontend URL
 
+    # ── Razorpay Payment ──────────────────────────────────────
+    # Get these from Razorpay Dashboard → Settings → API Keys
+    RAZORPAY_KEY_ID: str = ""               # e.g., rzp_test_AbCdEfGhIjKlMnOp
+    RAZORPAY_KEY_SECRET: str = ""           # Keep this PRIVATE!
+    RAZORPAY_WEBHOOK_SECRET: str = ""       # For webhook verification
+    
+    # Payment Mode: "test" or "live"
+    RAZORPAY_MODE: str = "test"             # Switch to "live" for production
+
     # ── Database ──────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://zephr:zephr@localhost:5432/zephrdb"
 
@@ -33,8 +42,11 @@ class Settings(BaseSettings):
     MAX_MSG_LENGTH: int = 2000
 
     # ── VIP ───────────────────────────────────────────────────
-    VIP_MONTHLY_PRICE: int = 499     # $4.99 in cents (Telegram Stars: ~100 stars)
-    VIP_QUARTERLY_PRICE: int = 999   # $9.99
+    # Pricing in smallest currency unit (paise for INR, cents for USD)
+    VIP_MONTHLY_PRICE_INR: int = 41500   # ₹415
+    VIP_QUARTERLY_PRICE_INR: int = 83000 # ₹830
+    VIP_MONTHLY_PRICE_USD: int = 499     # $4.99
+    VIP_QUARTERLY_PRICE_USD: int = 999   # $9.99
     VIP_TRIAL_DAYS: int = 3
 
     # ── Rate Limiting ─────────────────────────────────────────

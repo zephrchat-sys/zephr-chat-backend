@@ -10,3 +10,7 @@ pydantic-settings==2.5.2
 pydantic==2.9.2
 aiohttp==3.10.10
 python-dotenv==1.0.1
+razorpay==1.4.1
+cryptography==41.0.7
+python-multipart==0.0.6
+bcrypt==3.2.4

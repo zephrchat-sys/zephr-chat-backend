@@ -12,3 +12,4 @@ aiohttp==3.10.10
 python-dotenv==1.0.1
 razorpay==1.4.1
 cryptography==41.0.7
+setuptools>=69.0.0

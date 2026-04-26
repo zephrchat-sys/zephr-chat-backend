@@ -15,6 +15,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_telegram_init_data, verify_telegram_init_data_dev
@@ -23,6 +24,7 @@ from database import get_db, init_db, get_or_create_user, User, Report, ChatSess
 from matching import engine as match_engine, QueueEntry
 from moderation import moderator
 import bot as telegram_bot
+import razorpay_routes
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -99,6 +101,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# ── Include Razorpay Payment Routes ───────────────────────────────────────────
+app.include_router(razorpay_routes.router)
 
 # ── Telegram Bot Webhook ──────────────────────────────────────────────────────
 @app.post("/bot/webhook")
@@ -676,3 +681,14 @@ async def websocket_endpoint(
         await match_engine.leave_queue(user_id)
         await match_engine.leave_session(user_id, reason="disconnected")
         await manager.disconnect(user_id)
+
+
+# ── Mount Static Files (Frontend) - MUST BE LAST ──────────────────────────────
+# This must be at the end so API routes take precedence
+import os
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+if os.path.exists(frontend_dir):
+    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
+    log.info(f"✅ Static files will be served from {frontend_dir}")
+else:
+    log.warning(f"⚠️ Frontend directory not found: {frontend_dir}")

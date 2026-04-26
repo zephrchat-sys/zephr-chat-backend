@@ -2,6 +2,8 @@
 zephr.chat — Telegram Bot (aiogram 3.x)
 Handles /start, /vip, /help, /report, payments, and admin commands.
 Run alongside the FastAPI server.
+
+UPDATED: Razorpay multi-currency payment integration via web checkout
 """
 import asyncio
 import logging
@@ -14,8 +16,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    LabeledPrice, PreCheckoutQuery, SuccessfulPayment, WebAppInfo,
-    MenuButtonWebApp, BotCommand, BotCommandScopeDefault,
+    WebAppInfo, MenuButtonWebApp, BotCommand, BotCommandScopeDefault,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -56,8 +57,8 @@ def vip_keyboard() -> InlineKeyboardMarkup:
             callback_data="vip_trial"
         )],
         [
-            InlineKeyboardButton(text="📅 Monthly — $4.99", callback_data="vip_monthly"),
-            InlineKeyboardButton(text="🔥 3 Months — $9.99", callback_data="vip_quarterly"),
+            InlineKeyboardButton(text="📅 Monthly — ₹415/$4.99", callback_data="vip_monthly"),
+            InlineKeyboardButton(text="🔥 3 Months — ₹830/$9.99", callback_data="vip_quarterly"),
         ],
         [InlineKeyboardButton(text="← Back", callback_data="back_main")],
     ])
@@ -67,6 +68,10 @@ def vip_keyboard() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
+    """
+    Handle /start command with deep link support
+    Supports: referrals, VIP links, payment success callbacks
+    """
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(
             db,
@@ -77,24 +82,59 @@ async def cmd_start(message: Message):
         )
     
         # Handle deep link parameters: /start PARAMETER
+        param = None
         if message.text and len(message.text.split()) > 1:
             param = message.text.split()[1]
-    
-        # NEW: Handle VIP deep link from web app
-        if param == "vip":
-            await cmd_vip(message)  # Show VIP options immediately
-            return
-    
-        # Handle referral links
-        if param.startswith("ref_") and not user.referred_by:
-            await _handle_referral(db, user, param[4:])
         
-        # Handle referral from deep link: /start ref_XXXXX
-        if message.text and len(message.text.split()) > 1:
-            ref_code = message.text.split()[1]
-            if ref_code.startswith("ref_") and not user.referred_by:
-                await _handle_referral(db, user, ref_code[4:])
+        # ─────────────────────────────────────────────────────────────────────────
+        # HANDLE PAYMENT SUCCESS RETURN FROM RAZORPAY
+        # ─────────────────────────────────────────────────────────────────────────
+        if param == "payment_success":
+            # User returned from successful Razorpay payment
+            result = await db.execute(
+                select(User).where(User.id == message.from_user.id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if user and user.is_vip:
+                expiry_date = user.vip_expires_at.strftime('%B %d, %Y') if user.vip_expires_at else "Unknown"
+                
+                await message.answer(
+                    "🎉 <b>Payment Successful!</b>\n\n"
+                    "Your VIP subscription is now active!\n\n"
+                    "<b>VIP Benefits:</b>\n"
+                    "• ⚡ Priority matching (< 0.5 sec)\n"
+                    "• 🎯 Gender & country filters\n"
+                    "• 🌐 Auto-translate messages\n"
+                    "• 🏷 Username reveal option\n"
+                    "• 🚫 Ad-free experience\n\n"
+                    f"✨ <b>Active until:</b> {expiry_date}\n\n"
+                    "Thank you for supporting zephr.chat! 👑",
+                    reply_markup=main_keyboard()
+                )
+            else:
+                await message.answer(
+                    "⚠️ <b>Payment Processing</b>\n\n"
+                    "Your payment is being processed. VIP access will be activated shortly.\n\n"
+                    "If you don't receive VIP within 5 minutes, please contact support.",
+                    reply_markup=main_keyboard()
+                )
+            return
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        # HANDLE VIP DEEP LINK FROM WEB APP
+        # ─────────────────────────────────────────────────────────────────────────
+        if param and param.startswith("vip"):
+            await cmd_vip(message)
+            return
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        # HANDLE REFERRAL LINKS
+        # ─────────────────────────────────────────────────────────────────────────
+        if param and param.startswith("ref_") and not user.referred_by:
+            await _handle_referral(db, user, param[4:])
 
+    # Default welcome message
     name = message.from_user.first_name or "there"
     await message.answer(
         f"👋 Hey <b>{name}</b>! Welcome to <b>zephr.chat</b>\n\n"
@@ -106,7 +146,7 @@ async def cmd_start(message: Message):
 
 
 async def _handle_referral(db: AsyncSession, new_user: User, referrer_code: str):
-    from sqlalchemy import select, update
+    """Handle referral code and grant bonus VIP to referrer"""
     result = await db.execute(select(User).where(User.referral_code == referrer_code))
     referrer = result.scalar_one_or_none()
 
@@ -223,8 +263,9 @@ async def cmd_vip(event: Message | CallbackQuery):
         "🏷 <b>Username Reveal</b> — Share @handle (with consent)\n"
         "🚫 <b>No Ads</b> — Pure chat experience\n\n"
         "💰 <b>Pricing</b>\n"
-        "• Monthly: <b>$4.99/month</b>\n"
-        "• 3 Months: <b>$9.99</b> (save 33%)\n\n"
+        "• India: ₹415/month or ₹830/3 months\n"
+        "• International: $4.99/month or $9.99/3 months\n"
+        "• 100+ currencies supported!\n\n"
         "🎁 <b>First 3 days FREE</b> — cancel anytime"
     )
     kb = vip_keyboard()
@@ -235,210 +276,145 @@ async def cmd_vip(event: Message | CallbackQuery):
         await event.answer(text, reply_markup=kb)
 
 
-# ── VIP Payment Flow ──────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# VIP Payment Flow - RAZORPAY WEB CHECKOUT
+# ══════════════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.in_(["vip_trial", "vip_monthly", "vip_quarterly"]))
 async def vip_payment(callback: CallbackQuery):
+    """
+    Handle VIP payment selection
+    - Free trial: Activate immediately
+    - Paid plans: Redirect to Razorpay web checkout with multi-currency support
+    """
     plan = callback.data.replace("vip_", "")
     
-    # Handle free trial directly without payment
+    # ══════════════════════════════════════════════════════════════════════════
+    # HANDLE FREE TRIAL
+    # ══════════════════════════════════════════════════════════════════════════
     if plan == "trial":
-        async with AsyncSessionLocal() as db:
-            user = await get_or_create_user(
-                db, 
-                user_id=callback.from_user.id,
-                first_name=callback.from_user.first_name,
-                username=callback.from_user.username
-            )
-            
-            # Check if already had trial
-            if user.had_vip_trial:
-                await callback.answer("⚠️ You've already used your free trial!", show_alert=True)
-                return
-            
-            # Grant 3-day trial
-            new_expiry = datetime.utcnow() + timedelta(days=3)
-            
-            await db.execute(
-                update(User).where(User.id == user.id).values(
-                    is_vip=True,
-                    vip_expires_at=new_expiry,
-                    had_vip_trial=True
+        try:
+            async with AsyncSessionLocal() as db:
+                # Get or create user
+                user = await get_or_create_user(
+                    db, 
+                    user_id=callback.from_user.id,
+                    first_name=callback.from_user.first_name,
+                    username=callback.from_user.username
                 )
-            )
-            await db.commit()
-            
-            await callback.message.answer(
-                "🎉 <b>Free Trial Activated!</b>\n\n"
-                "You now have VIP access for 3 days:\n"
-                "• ⚡ Priority matching queue\n"
-                "• 🌍 Gender & country filters\n"
-                "• 🌐 Auto-translate messages\n"
-                "• 🎨 Custom themes\n\n"
-                f"Expires: {new_expiry.strftime('%B %d, %Y')}"
-            )
-            await callback.answer()
+                
+                # Refresh user object to ensure we have latest data from DB
+                await db.refresh(user)
+                
+                # Check if already had trial
+                if user.had_vip_trial:
+                    await callback.answer("⚠️ You've already used your free trial!", show_alert=True)
+                    log.info(f"User {user.id} attempted to claim trial again (already used)")
+                    return
+                
+                # Grant 3-day trial
+                new_expiry = datetime.utcnow() + timedelta(days=3)
+                
+                # Update user object directly instead of using update query
+                user.is_vip = True
+                user.vip_expires_at = new_expiry
+                user.had_vip_trial = True
+                
+                # Commit changes
+                await db.commit()
+                await db.refresh(user)
+                
+                log.info(f"✅ VIP trial activated for user {user.id} (@{user.username}). Expires: {new_expiry}")
+                
+                await callback.message.answer(
+                    "🎉 <b>Free Trial Activated!</b>\n\n"
+                    "You now have VIP access for 3 days:\n"
+                    "• ⚡ Priority matching queue\n"
+                    "• 🌍 Gender & country filters\n"
+                    "• 🌐 Auto-translate messages\n"
+                    "• 🏷 Username reveal option\n"
+                    "• 🚫 No ads\n\n"
+                    f"Expires: {new_expiry.strftime('%B %d, %Y')}"
+                )
+                await callback.answer()
+                return
+        except Exception as e:
+            log.error(f"❌ Failed to activate VIP trial for user {callback.from_user.id}: {e}")
+            await callback.answer("❌ Failed to activate trial. Please try again later.", show_alert=True)
             return
     
-    # ═══════════════════════════════════════════════════════════════════════════
-    # PAID PLANS - TELEGRAM STARS (RECOMMENDED METHOD)
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
+    # HANDLE PAID PLANS - RAZORPAY WEB CHECKOUT
+    # ══════════════════════════════════════════════════════════════════════════
     
-    # Pricing: 1 Star ≈ $0.025 (2.5 cents)
-    # Monthly $4.99 ≈ 200 Stars
-    # Quarterly $9.99 ≈ 400 Stars
-    prices_map = {
-        "monthly": (200, "VIP Monthly", "One month of VIP access"),
-        "quarterly": (400, "VIP 3 Months", "Three months of VIP - Save 33%!"),
+    # Plan details for display
+    plan_details = {
+        "monthly": {
+            "name": "Monthly VIP Plan",
+            "price_inr": "₹415",
+            "price_usd": "$4.99",
+            "duration": "1 month",
+            "emoji": "📅"
+        },
+        "quarterly": {
+            "name": "3 Months VIP Plan",
+            "price_inr": "₹830",
+            "price_usd": "$9.99",
+            "duration": "3 months",
+            "badge": "🔥 Save 33%",
+            "emoji": "🔥"
+        }
     }
     
-    if plan not in prices_map:
-        await callback.answer("Invalid plan selected", show_alert=True)
-        return
+    details = plan_details.get(plan, plan_details["monthly"])
     
-    stars, title, description = prices_map[plan]
-    prices = [LabeledPrice(label=title, amount=stars)]
-    
-    # Generate unique payload to track this payment
-    payload = f"vip_{plan}_{callback.from_user.id}_{secrets.token_hex(4)}"
-    
-    try:
-        await bot.send_invoice(
-            chat_id=callback.from_user.id,
-            title=title,
-            description=description,
-            payload=payload,
-            provider_token="",  # Empty string for Telegram Stars!
-            currency="XTR",     # XTR = Telegram Stars currency code
-            prices=prices,
-            start_parameter=f"vip_{plan}",
-        )
-        await callback.answer("💳 Payment invoice sent to you!")
-        log.info(f"Sent payment invoice to user {callback.from_user.id} for {plan}")
-    except Exception as e:
-        log.error(f"Failed to send invoice: {e}")
-        await callback.answer("❌ Failed to create payment. Please try again.", show_alert=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # ALTERNATIVE: STRIPE/TRADITIONAL PAYMENT PROCESSOR
-    # Uncomment this section and comment out the Telegram Stars section above
-    # if you want to use Stripe or another traditional payment processor
-    # ═══════════════════════════════════════════════════════════════════════════
-    # 
-    # # Requires STRIPE_PROVIDER_TOKEN in settings
-    # prices_map = {
-    #     "monthly": (499, "VIP Monthly", "One month of VIP access"),
-    #     "quarterly": (999, "VIP 3 Months", "Three months of VIP - Save 33%!"),
-    # }
-    #
-    # if plan not in prices_map:
-    #     await callback.answer("Invalid plan selected", show_alert=True)
-    #     return
-    #
-    # cents, title, description = prices_map[plan]
-    # prices = [LabeledPrice(label=title, amount=cents)]
-    #
-    # payload = f"vip_{plan}_{callback.from_user.id}_{secrets.token_hex(4)}"
-    #
-    # try:
-    #     await bot.send_invoice(
-    #         chat_id=callback.from_user.id,
-    #         title=title,
-    #         description=description,
-    #         payload=payload,
-    #         provider_token=settings.STRIPE_PROVIDER_TOKEN,  # Your Stripe token
-    #         currency="USD",     # USD, EUR, GBP, etc.
-    #         prices=prices,
-    #         start_parameter=f"vip_{plan}",
-    #         # Optional: Add tips support
-    #         # max_tip_amount=1000,
-    #         # suggested_tip_amounts=[100, 200, 500],
-    #     )
-    #     await callback.answer("💳 Payment invoice sent to you!")
-    #     log.info(f"Sent payment invoice to user {callback.from_user.id} for {plan}")
-    # except Exception as e:
-    #     log.error(f"Failed to send invoice: {e}")
-    #     await callback.answer("❌ Failed to create payment. Please try again.", show_alert=True)
-
-
-@router.pre_checkout_query()
-async def pre_checkout(query: PreCheckoutQuery):
-    """
-    Always approve pre-checkout — validation is in successful_payment.
-    This is called before payment is actually charged.
-    """
-    await query.answer(ok=True)
-    log.info(f"Pre-checkout approved for user {query.from_user.id}")
-
-
-@router.message(F.successful_payment)
-async def successful_payment(message: Message):
-    """
-    Handle successful payment and grant VIP access.
-    This is called after payment is completed and charged.
-    """
-    payment: SuccessfulPayment = message.successful_payment
-    payload = payment.invoice_payload  # Format: "vip_monthly_123456_abc123"
-    
-    log.info(f"Payment successful: {payload}")
-    
-    # Extract plan from payload
-    parts = payload.split("_")
-    if len(parts) < 2:
-        log.error(f"Invalid payload format: {payload}")
-        return
-        
-    plan = parts[1]  # "monthly" or "quarterly"
-
-    # Map plan to days
-    days_map = {"monthly": 31, "quarterly": 92}
-    days = days_map.get(plan, 31)
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.id == message.from_user.id))
-        user = result.scalar_one_or_none()
-
-        if user:
-            # Calculate new expiry (extend if already VIP)
-            new_expiry = max(
-                user.vip_expires_at or datetime.utcnow(),
-                datetime.utcnow()
-            ) + timedelta(days=days)
-
-            # Grant VIP
-            await db.execute(
-                update(User).where(User.id == user.id).values(
-                    is_vip=True,
-                    vip_expires_at=new_expiry
-                )
-            )
-
-            # Record payment in database
-            vp = VIPPayment(
-                user_id=user.id,
-                telegram_charge_id=payment.telegram_payment_charge_id,
-                provider_charge_id=payment.provider_payment_charge_id or "",
-                amount=payment.total_amount,
-                currency=payment.currency,
-                plan=plan,
-            )
-            db.add(vp)
-            await db.commit()
-            
-            log.info(f"VIP granted to user {user.id} until {new_expiry}")
-
-    await message.answer(
-        f"🎉 <b>Welcome to VIP!</b>\n\n"
-        f"Your {plan} plan is now active until "
-        f"<b>{new_expiry.strftime('%B %d, %Y')}</b>.\n\n"
-        f"Enjoy:\n"
-        f"• ⚡ Priority matching queue\n"
-        f"• 🎯 Gender & country filters\n"
-        f"• 🌐 Auto-translate messages\n"
-        f"• 🏷 Username reveal option\n"
-        f"• 🚫 No ads\n\n"
-        f"Thanks for supporting zephr.chat! 👑"
+    # Generate checkout URL with user parameters
+    checkout_url = (
+        f"{settings.WEBAPP_URL}/checkout.html?"
+        f"plan={plan}&"
+        f"user_id={callback.from_user.id}&"
+        f"first_name={callback.from_user.first_name or 'User'}"
     )
+    
+    # Create inline button to open web checkout
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="💳 Proceed to Payment",
+            url=checkout_url
+        )],
+        [InlineKeyboardButton(
+            text="← Back to Plans",
+            callback_data="vip_info"
+        )]
+    ])
+    
+    # Message text
+    message_text = (
+        f"{details['emoji']} <b>{details['name']}</b>\n\n"
+        f"💰 <b>Price:</b>\n"
+        f"• 🇮🇳 India: {details['price_inr']}\n"
+        f"• 🌍 International: {details['price_usd']}\n"
+        f"• Duration: {details['duration']}\n"
+    )
+    
+    if "badge" in details:
+        message_text += f"\n{details['badge']}\n"
+    
+    message_text += (
+        f"\n<b>💳 Payment Methods:</b>\n"
+        f"🇮🇳 <b>India:</b> UPI • Cards • Net Banking • Wallets\n"
+        f"🌍 <b>Global:</b> Credit/Debit Cards (100+ currencies)\n\n"
+        f"✅ Secure payment powered by Razorpay\n"
+        f"🔒 256-bit encryption • PCI DSS certified\n"
+        f"💯 100% money-back guarantee\n\n"
+        f"<i>Click below to choose your currency and pay:</i>"
+    )
+    
+    await callback.message.edit_text(
+        message_text,
+        reply_markup=keyboard
+    )
+    await callback.answer()
 
 
 # ── Back Button ───────────────────────────────────────────────────────────────
@@ -530,11 +506,11 @@ async def check_vip_renewals():
                             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                                 [
                                     InlineKeyboardButton(
-                                        text="📅 Monthly — $4.99",
+                                        text="📅 Monthly — ₹415/$4.99",
                                         callback_data="vip_monthly"
                                     ),
                                     InlineKeyboardButton(
-                                        text="🔥 3 Months — $9.99",
+                                        text="🔥 3 Months — ₹830/$9.99",
                                         callback_data="vip_quarterly"
                                     ),
                                 ]
@@ -619,6 +595,7 @@ async def setup_bot():
     
     log.info("✅ Bot commands and menu button set")
     log.info("✅ Background renewal tasks started")
+    log.info("✅ Razorpay web checkout payment flow active")
 
 
 async def run_bot():

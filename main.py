@@ -24,7 +24,6 @@ from database import get_db, init_db, get_or_create_user, User, Report, ChatSess
 from matching import engine as match_engine, QueueEntry
 from moderation import moderator
 import bot as telegram_bot
-import razorpay_routes
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -101,9 +100,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
-
-# ── Include Razorpay Payment Routes ───────────────────────────────────────────
-app.include_router(razorpay_routes.router)
 
 # ── Telegram Bot Webhook ──────────────────────────────────────────────────────
 @app.post("/bot/webhook")

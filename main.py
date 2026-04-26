@@ -14,7 +14,7 @@ from fastapi import (
     Depends, HTTPException, Request, status
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ from database import get_db, init_db, get_or_create_user, User, Report, ChatSess
 from matching import engine as match_engine, QueueEntry
 from moderation import moderator
 import bot as telegram_bot
+import razorpay_routes
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -101,6 +102,9 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# Include Razorpay payment routes
+app.include_router(razorpay_routes.router)
+
 # ── Telegram Bot Webhook ──────────────────────────────────────────────────────
 @app.post("/bot/webhook")
 async def telegram_webhook(request: Request):
@@ -142,6 +146,31 @@ def get_telegram_user(request: Request) -> dict:
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "zephr.chat"}
+
+
+@app.get("/checkout.html")
+async def serve_checkout():
+    """Serve the checkout page directly - bypasses static file mounting issues"""
+    from fastapi.responses import FileResponse
+    import os
+    
+    # Try to find checkout.html
+    possible_paths = [
+        "/app/frontend/checkout.html",
+        os.path.join(os.path.dirname(__file__), "..", "frontend", "checkout.html"),
+        os.path.join(os.getcwd(), "frontend", "checkout.html"),
+        "../frontend/checkout.html",
+    ]
+    
+    for path in possible_paths:
+        abs_path = os.path.abspath(path)
+        if os.path.exists(abs_path):
+            log.info(f"✅ Serving checkout.html from: {abs_path}")
+            return FileResponse(abs_path, media_type="text/html")
+    
+    # If file not found, return embedded HTML as fallback
+    log.warning("⚠️ checkout.html file not found, serving embedded version")
+    raise HTTPException(status_code=404, detail="Checkout page not found")
 
 
 @app.get("/api/stats")

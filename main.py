@@ -680,11 +680,36 @@ async def websocket_endpoint(
 
 
 # ── Mount Static Files (Frontend) - MUST BE LAST ──────────────────────────────
-# This must be at the end so API routes take precedence
+# Try multiple possible paths for different deployment environments
 import os
-frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if os.path.exists(frontend_dir):
-    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
-    log.info(f"✅ Static files will be served from {frontend_dir}")
+
+possible_frontend_paths = [
+    "/app/frontend",                                      # Railway direct path
+    os.path.join(os.path.dirname(__file__), "..", "frontend"),  # Relative path
+    "/app/zephr-chat/frontend",                          # Alternative Railway path
+    os.path.join(os.getcwd(), "frontend"),               # Current working directory
+    "../frontend",                                        # Simple relative
+]
+
+frontend_dir = None
+for path in possible_frontend_paths:
+    abs_path = os.path.abspath(path)
+    if os.path.exists(abs_path) and os.path.isdir(abs_path):
+        frontend_dir = abs_path
+        log.info(f"✅ Found frontend directory at: {frontend_dir}")
+        break
+
+if frontend_dir:
+    try:
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
+        log.info(f"✅ Static files mounted and serving from: {frontend_dir}")
+        
+        # List files in frontend directory for debugging
+        files = os.listdir(frontend_dir)
+        log.info(f"📁 Frontend files available: {', '.join(files[:10])}")  # First 10 files
+    except Exception as e:
+        log.error(f"❌ Failed to mount static files: {e}")
 else:
-    log.warning(f"⚠️ Frontend directory not found: {frontend_dir}")
+    log.warning(f"⚠️ Frontend directory not found. Searched: {possible_frontend_paths}")
+    log.warning(f"📍 Current working directory: {os.getcwd()}")
+    log.warning(f"📍 Script directory: {os.path.dirname(__file__)}")

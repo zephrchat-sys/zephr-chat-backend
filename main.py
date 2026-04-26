@@ -14,7 +14,7 @@ from fastapi import (
     Depends, HTTPException, Request, status
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -150,27 +150,26 @@ async def health():
 
 @app.get("/checkout.html")
 async def serve_checkout():
-    """Serve the checkout page directly - bypasses static file mounting issues"""
-    from fastapi.responses import FileResponse
-    import os
+    """Serve the checkout page - fetches from GitHub frontend repo"""
+    from fastapi.responses import HTMLResponse
+    import aiohttp
     
-    # Try to find checkout.html
-    possible_paths = [
-        "/app/frontend/checkout.html",
-        os.path.join(os.path.dirname(__file__), "..", "frontend", "checkout.html"),
-        os.path.join(os.getcwd(), "frontend", "checkout.html"),
-        "../frontend/checkout.html",
-    ]
+    # Fetch checkout.html from GitHub frontend repo
+    github_url = "https://raw.githubusercontent.com/zephrchat-sys/zephr-chat-frontend/main/checkout.html"
     
-    for path in possible_paths:
-        abs_path = os.path.abspath(path)
-        if os.path.exists(abs_path):
-            log.info(f"✅ Serving checkout.html from: {abs_path}")
-            return FileResponse(abs_path, media_type="text/html")
-    
-    # If file not found, return embedded HTML as fallback
-    log.warning("⚠️ checkout.html file not found, serving embedded version")
-    raise HTTPException(status_code=404, detail="Checkout page not found")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(github_url) as response:
+                if response.status == 200:
+                    html_content = await response.text()
+                    log.info(f"✅ Serving checkout.html from GitHub frontend repo")
+                    return HTMLResponse(content=html_content)
+                else:
+                    log.error(f"❌ Failed to fetch checkout.html from GitHub: {response.status}")
+                    raise HTTPException(status_code=503, detail="Checkout page temporarily unavailable")
+    except Exception as e:
+        log.error(f"❌ Error fetching checkout.html: {e}")
+        raise HTTPException(status_code=503, detail="Checkout page temporarily unavailable")
 
 
 @app.get("/api/stats")

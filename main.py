@@ -932,6 +932,37 @@ async def websocket_endpoint(
                     "timestamp": media_data["timestamp"],
                 })
 
+            # ── Friend Request ────────────────────────────────
+            elif msg_type == "friend_request":
+                session_id = msg.get("session_id")
+                if not session_id:
+                    continue
+                
+                # Forward to peer via Redis pub/sub
+                session_data = await match_engine.get_session(session_id)
+                if not session_data:
+                    continue
+                
+                u1 = int(session_data.get("user1_id", 0))
+                u2 = int(session_data.get("user2_id", 0))
+                
+                if user_id not in (u1, u2):
+                    continue
+                
+                # Send to peer
+                peer_id = u2 if user_id == u1 else u1
+                from datetime import datetime as dt
+                await match_engine.redis.publish(
+                    f"zephr:user:{peer_id}",
+                    json.dumps({
+                        "type": "friend_request",
+                        "session_id": session_id,
+                        "timestamp": dt.utcnow().isoformat()
+                    })
+                )
+                
+                log.info(f"👥 Friend request notification sent to {peer_id}")
+
             # ── Leave Session ─────────────────────────────────
             elif msg_type == "leave_session":
                 session_id = await match_engine.leave_session(user_id, reason="user_left")

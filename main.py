@@ -611,6 +611,7 @@ async def accept_friend_request(
     # Get friend request
     from sqlalchemy import select, update
     from database import FriendRequest, Friend
+    from datetime import datetime
     
     result = await db.execute(
         select(FriendRequest).where(
@@ -657,6 +658,7 @@ async def decline_friend_request(
     # Get friend request
     from sqlalchemy import select, update
     from database import FriendRequest
+    from datetime import datetime
     
     result = await db.execute(
         select(FriendRequest).where(

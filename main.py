@@ -331,6 +331,229 @@ async def submit_report(
     return {"ok": True, "message": "Report submitted. Thank you for keeping zephr safe."}
 
 
+@app.post("/api/friend-request")
+async def send_friend_request(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Send a friend request to the current chat peer."""
+    tg_user = get_telegram_user(request)
+    body = await request.json()
+    
+    session_id = body.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    
+    # Get session from Redis to find the peer
+    session_data = await match_engine.get_session(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    u1 = int(session_data.get("user1_id", 0))
+    u2 = int(session_data.get("user2_id", 0))
+    requester_id = tg_user["id"]
+    
+    if requester_id not in (u1, u2):
+        raise HTTPException(status_code=403, detail="Not in this session")
+    
+    # Determine who the peer is
+    recipient_id = u2 if requester_id == u1 else u1
+    
+    # Check if friend request already exists
+    from sqlalchemy import select
+    from database import FriendRequest
+    
+    existing = await db.execute(
+        select(FriendRequest).where(
+            (FriendRequest.requester_id == requester_id) &
+            (FriendRequest.recipient_id == recipient_id) &
+            (FriendRequest.status == "pending")
+        )
+    )
+    
+    if existing.scalar_one_or_none():
+        return {"ok": True, "message": "Friend request already sent"}
+    
+    # Create friend request
+    friend_req = FriendRequest(
+        requester_id=requester_id,
+        recipient_id=recipient_id,
+        session_id=session_id,
+        status="pending"
+    )
+    
+    db.add(friend_req)
+    await db.commit()
+    await db.refresh(friend_req)
+    
+    log.info(f"👥 Friend request sent from {requester_id} to {recipient_id} in session {session_id}")
+    
+    return {"ok": True, "message": "Friend request sent", "request_id": friend_req.id}
+
+
+@app.get("/api/friends")
+async def get_friends(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get user's friend list."""
+    tg_user = get_telegram_user(request)
+    telegram_id = tg_user["id"]
+    
+    # Get friends
+    from sqlalchemy import select
+    from database import Friend, User
+    
+    result = await db.execute(
+        select(Friend).where(Friend.user_id == telegram_id)
+    )
+    friends = result.scalars().all()
+    
+    # Get friend details
+    friend_list = []
+    for friend_record in friends:
+        friend_user_result = await db.execute(
+            select(User).where(User.id == friend_record.friend_id)
+        )
+        friend_data = friend_user_result.scalar_one_or_none()
+        if friend_data:
+            friend_list.append({
+                "telegram_id": friend_data.id,
+                "first_name": friend_data.first_name,
+                "username": friend_data.username,
+                "added_at": friend_record.created_at.isoformat()
+            })
+    
+    return {"ok": True, "friends": friend_list, "count": len(friend_list)}
+
+
+@app.get("/api/friend-requests/pending")
+async def get_pending_requests(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get pending friend requests received by the user."""
+    tg_user = get_telegram_user(request)
+    telegram_id = tg_user["id"]
+    
+    # Get pending requests where user is the recipient
+    from sqlalchemy import select
+    from database import FriendRequest, User
+    
+    result = await db.execute(
+        select(FriendRequest).where(
+            (FriendRequest.recipient_id == telegram_id) &
+            (FriendRequest.status == "pending")
+        ).order_by(FriendRequest.created_at.desc())
+    )
+    requests = result.scalars().all()
+    
+    # Get requester details
+    request_list = []
+    for req in requests:
+        requester_result = await db.execute(
+            select(User).where(User.id == req.requester_id)
+        )
+        requester_data = requester_result.scalar_one_or_none()
+        if requester_data:
+            request_list.append({
+                "request_id": req.id,
+                "from_user": {
+                    "telegram_id": requester_data.id,
+                    "first_name": requester_data.first_name,
+                    "username": requester_data.username
+                },
+                "created_at": req.created_at.isoformat()
+            })
+    
+    return {"ok": True, "requests": request_list, "count": len(request_list)}
+
+
+@app.post("/api/friend-requests/{request_id}/accept")
+async def accept_friend_request(
+    request_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Accept a friend request."""
+    tg_user = get_telegram_user(request)
+    telegram_id = tg_user["id"]
+    
+    # Get friend request
+    from sqlalchemy import select, update
+    from database import FriendRequest, Friend
+    
+    result = await db.execute(
+        select(FriendRequest).where(
+            (FriendRequest.id == request_id) &
+            (FriendRequest.recipient_id == telegram_id) &
+            (FriendRequest.status == "pending")
+        )
+    )
+    friend_req = result.scalar_one_or_none()
+    
+    if not friend_req:
+        raise HTTPException(status_code=404, detail="Friend request not found")
+    
+    # Update status
+    await db.execute(
+        update(FriendRequest).where(
+            FriendRequest.id == request_id
+        ).values(status="accepted", responded_at=datetime.utcnow())
+    )
+    
+    # Create bidirectional friendship
+    friend1 = Friend(user_id=telegram_id, friend_id=friend_req.requester_id)
+    friend2 = Friend(user_id=friend_req.requester_id, friend_id=telegram_id)
+    
+    db.add(friend1)
+    db.add(friend2)
+    await db.commit()
+    
+    log.info(f"👥 Friend request {request_id} accepted: {telegram_id} <-> {friend_req.requester_id}")
+    
+    return {"ok": True, "message": "Friend request accepted"}
+
+
+@app.post("/api/friend-requests/{request_id}/decline")
+async def decline_friend_request(
+    request_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Decline a friend request."""
+    tg_user = get_telegram_user(request)
+    telegram_id = tg_user["id"]
+    
+    # Get friend request
+    from sqlalchemy import select, update
+    from database import FriendRequest
+    
+    result = await db.execute(
+        select(FriendRequest).where(
+            (FriendRequest.id == request_id) &
+            (FriendRequest.recipient_id == telegram_id) &
+            (FriendRequest.status == "pending")
+        )
+    )
+    friend_req = result.scalar_one_or_none()
+    
+    if not friend_req:
+        raise HTTPException(status_code=404, detail="Friend request not found")
+    
+    # Update status
+    await db.execute(
+        update(FriendRequest).where(
+            FriendRequest.id == request_id
+        ).values(status="declined", responded_at=datetime.utcnow())
+    )
+    await db.commit()
+    
+    log.info(f"👥 Friend request {request_id} declined by {telegram_id}")
+    
+    return {"ok": True, "message": "Friend request declined"}
+
+
 @app.post("/api/rate")
 async def submit_rating(
     request: Request,

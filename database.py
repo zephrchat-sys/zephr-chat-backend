@@ -156,6 +156,45 @@ class VIPPayment(Base):
     created_at = Column(DateTime, default=func.now())
 
 
+class FriendRequest(Base):
+    """
+    Friend requests sent during anonymous chats.
+    """
+    __tablename__ = "friend_requests"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    requester_id = Column(BigInteger, nullable=False)  # Who sent the request
+    recipient_id = Column(BigInteger, nullable=False)  # Who received it
+    session_id = Column(String(36), nullable=False)    # Chat session where it was sent
+    status = Column(String(16), default="pending")     # "pending", "accepted", "declined"
+    created_at = Column(DateTime, default=func.now())
+    responded_at = Column(DateTime, nullable=True)
+    
+    __table_args__ = (
+        Index("ix_friend_requests_requester", "requester_id"),
+        Index("ix_friend_requests_recipient", "recipient_id"),
+        Index("ix_friend_requests_status", "status"),
+    )
+
+
+class Friend(Base):
+    """
+    Bidirectional friendships between users.
+    When a friend request is accepted, two Friend records are created.
+    """
+    __tablename__ = "friends"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, nullable=False)       # One user
+    friend_id = Column(BigInteger, nullable=False)     # Their friend
+    created_at = Column(DateTime, default=func.now())
+    
+    __table_args__ = (
+        Index("ix_friends_user", "user_id"),
+        Index("ix_friends_friend", "friend_id"),
+    )
+
+
 # ── DB Helpers ────────────────────────────────────────────────────────────────
 
 async def get_db():

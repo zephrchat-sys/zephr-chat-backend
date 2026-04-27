@@ -417,9 +417,8 @@ async def get_friends(
         )
         friend_data = friend_user_result.scalar_one_or_none()
         if friend_data:
-            # Check if friend is online via Redis (user:online:{user_id} key)
-            online_check = await match_engine.redis.get(f"zephr:user:online:{friend_data.id}")
-            is_online = bool(online_check)
+            # Check if friend is online via WebSocket ConnectionManager
+            is_online = friend_data.id in manager.connections
             
             friend_list.append({
                 "telegram_id": friend_data.id,
@@ -488,13 +487,6 @@ async def start_friend_chat(
     if not friendship:
         raise HTTPException(status_code=404, detail="Not friends with this user")
     
-    # Check if friend is online via Redis
-    online_check = await match_engine.redis.get(f"zephr:user:online:{friend_id}")
-    is_online = bool(online_check)
-    
-    if not is_online:
-        raise HTTPException(status_code=400, detail="Friend is offline. They need to be online to chat.")
-    
     # Create a friend chat session
     import uuid
     session_id = str(uuid.uuid4())
@@ -520,35 +512,39 @@ async def start_friend_chat(
     
     await match_engine.redis.setex(
         f"zephr:session:{session_id}",
-        3600,  # 1 hour expiry
+        86400,  # 24 hour expiry (longer for friend chats)
         json.dumps(session_data)
     )
     
     # Notify both users via WebSocket
     from datetime import datetime as dt
     
-    # Send to user initiating chat
+    match_notification = {
+        "type": "matched",
+        "session_id": session_id,
+        "peer_anon": friend_user.first_name if friend_user else "Friend",
+        "peer_emoji": "👤",
+        "topic": "Friend Chat",
+    }
+    
+    # Send to user initiating chat (immediate)
     await match_engine.redis.publish(
         f"zephr:user:{telegram_id}",
-        json.dumps({
-            "type": "matched",
-            "session_id": session_id,
-            "peer_anon": friend_user.first_name if friend_user else "Friend",
-            "peer_emoji": "👤",
-            "topic": "Friend Chat",
-        })
+        json.dumps(match_notification)
     )
     
-    # Send to friend
+    # Send to friend (will receive when they come online if offline)
+    friend_notification = {
+        "type": "matched",
+        "session_id": session_id,
+        "peer_anon": current_user.first_name if current_user else "Friend",
+        "peer_emoji": "👤",
+        "topic": "Friend Chat",
+    }
+    
     await match_engine.redis.publish(
         f"zephr:user:{friend_id}",
-        json.dumps({
-            "type": "matched",
-            "session_id": session_id,
-            "peer_anon": current_user.first_name if current_user else "Friend",
-            "peer_emoji": "👤",
-            "topic": "Friend Chat",
-        })
+        json.dumps(friend_notification)
     )
     
     log.info(f"👥 Friend chat started: {telegram_id} <-> {friend_id} (session: {session_id})")
@@ -901,6 +897,45 @@ async def websocket_endpoint(
 
     await manager.connect(user_id, websocket)
 
+    # Deliver offline messages if any
+    from sqlalchemy import select, update
+    from database import OfflineMessage
+    from datetime import datetime
+    
+    result = await db.execute(
+        select(OfflineMessage).where(
+            (OfflineMessage.recipient_id == user_id) &
+            (OfflineMessage.delivered == False)
+        ).order_by(OfflineMessage.created_at)
+    )
+    offline_messages = result.scalars().all()
+    
+    if offline_messages:
+        log.info(f"📬 Delivering {len(offline_messages)} offline messages to user {user_id}")
+        
+        for msg in offline_messages:
+            try:
+                # Send the message via WebSocket
+                await websocket.send_json({
+                    "type": "message" if msg.message_type == "text" else msg.message_type,
+                    "session_id": msg.session_id,
+                    "text": msg.content if msg.message_type == "text" else None,
+                    "file_data": msg.content if msg.message_type in ["image", "voice", "gif"] else None,
+                    "timestamp": msg.created_at.isoformat(),
+                    "offline_delivery": True
+                })
+                
+                # Mark as delivered
+                await db.execute(
+                    update(OfflineMessage).where(
+                        OfflineMessage.id == msg.id
+                    ).values(delivered=True, delivered_at=datetime.utcnow())
+                )
+            except Exception as e:
+                log.error(f"Failed to deliver offline message {msg.id}: {e}")
+        
+        await db.commit()
+
     # Send initial stats
     stats = await match_engine.get_stats()
     await websocket.send_json({"type": "stats", **stats})
@@ -1016,6 +1051,39 @@ async def websocket_endpoint(
                     "score": mod_result.score,
                 }
 
+                # Check if this is a friend chat and if peer is offline
+                session_data = await match_engine.get_session(session_id)
+                if session_data and session_data.get("is_friend_chat"):
+                    u1 = int(session_data.get("user1_id", 0))
+                    u2 = int(session_data.get("user2_id", 0))
+                    peer_id = u2 if user_id == u1 else u1
+                    
+                    # If peer is offline, store message for later delivery
+                    if peer_id not in manager.connections:
+                        from database import OfflineMessage
+                        
+                        offline_msg = OfflineMessage(
+                            session_id=session_id,
+                            sender_id=user_id,
+                            recipient_id=peer_id,
+                            message_type="text",
+                            content=text,
+                            delivered=False
+                        )
+                        db.add(offline_msg)
+                        await db.commit()
+                        
+                        log.info(f"📬 Stored offline message from {user_id} to {peer_id}")
+                        
+                        # Still echo back to sender
+                        await websocket.send_json({
+                            "type": "message_sent",
+                            "session_id": session_id,
+                            "timestamp": message_data["timestamp"],
+                            "offline": True  # Indicate friend is offline
+                        })
+                        continue
+
                 sent = await match_engine.send_message(session_id, user_id, message_data)
                 if not sent:
                     await websocket.send_json({
@@ -1054,6 +1122,41 @@ async def websocket_endpoint(
                     "file_id": file_id,
                     "timestamp": dt.utcnow().isoformat(),
                 }
+                
+                # Check if this is a friend chat and if peer is offline
+                session_data = await match_engine.get_session(session_id)
+                if session_data and session_data.get("is_friend_chat"):
+                    u1 = int(session_data.get("user1_id", 0))
+                    u2 = int(session_data.get("user2_id", 0))
+                    peer_id = u2 if user_id == u1 else u1
+                    
+                    # If peer is offline, store media for later delivery
+                    if peer_id not in manager.connections:
+                        from database import OfflineMessage
+                        import json as json_lib
+                        
+                        offline_msg = OfflineMessage(
+                            session_id=session_id,
+                            sender_id=user_id,
+                            recipient_id=peer_id,
+                            message_type=media_type,
+                            content=json_lib.dumps(media_data),
+                            delivered=False
+                        )
+                        db.add(offline_msg)
+                        await db.commit()
+                        
+                        log.info(f"📬 Stored offline {media_type} from {user_id} to {peer_id}")
+                        
+                        # Still echo back to sender
+                        await websocket.send_json({
+                            "type": "media_sent",
+                            "session_id": session_id,
+                            "timestamp": media_data["timestamp"],
+                            "offline": True
+                        })
+                        continue
+                
                 await match_engine.send_message(session_id, user_id, {
                     **media_data, "is_media": True
                 })

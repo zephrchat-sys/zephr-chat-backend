@@ -195,6 +195,28 @@ class Friend(Base):
     )
 
 
+class OfflineMessage(Base):
+    """
+    Store messages sent to offline friends for later delivery.
+    """
+    __tablename__ = "offline_messages"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)        # Chat session ID
+    sender_id = Column(BigInteger, nullable=False)     # Who sent the message
+    recipient_id = Column(BigInteger, nullable=False)  # Who should receive it
+    message_type = Column(String, default="text")      # text, image, voice, gif
+    content = Column(Text, nullable=False)             # Message content or data
+    delivered = Column(Boolean, default=False)         # Has it been delivered?
+    created_at = Column(DateTime, default=func.now())
+    delivered_at = Column(DateTime, nullable=True)
+    
+    __table_args__ = (
+        Index("ix_offline_messages_recipient", "recipient_id", "delivered"),
+        Index("ix_offline_messages_session", "session_id"),
+    )
+
+
 # ── DB Helpers ────────────────────────────────────────────────────────────────
 
 async def get_db():

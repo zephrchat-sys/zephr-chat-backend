@@ -396,7 +396,7 @@ async def get_friends(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get user's friend list."""
+    """Get user's friend list with online status and last seen."""
     tg_user = get_telegram_user(request)
     telegram_id = tg_user["id"]
     
@@ -409,7 +409,7 @@ async def get_friends(
     )
     friends = result.scalars().all()
     
-    # Get friend details
+    # Get friend details with online status
     friend_list = []
     for friend_record in friends:
         friend_user_result = await db.execute(
@@ -417,14 +417,143 @@ async def get_friends(
         )
         friend_data = friend_user_result.scalar_one_or_none()
         if friend_data:
+            # Check if friend is online via Redis (user:online:{user_id} key)
+            online_check = await match_engine.redis.get(f"zephr:user:online:{friend_data.id}")
+            is_online = bool(online_check)
+            
             friend_list.append({
                 "telegram_id": friend_data.id,
                 "first_name": friend_data.first_name,
                 "username": friend_data.username,
-                "added_at": friend_record.created_at.isoformat()
+                "added_at": friend_record.created_at.isoformat(),
+                "is_online": is_online,
+                "last_seen": friend_data.last_seen.isoformat() if friend_data.last_seen else None
             })
     
     return {"ok": True, "friends": friend_list, "count": len(friend_list)}
+
+
+@app.delete("/api/friends/{friend_id}")
+async def remove_friend(
+    friend_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove a friend (bidirectional)."""
+    tg_user = get_telegram_user(request)
+    telegram_id = tg_user["id"]
+    
+    from sqlalchemy import select, delete
+    from database import Friend
+    
+    # Delete both friendship records (bidirectional)
+    await db.execute(
+        delete(Friend).where(
+            ((Friend.user_id == telegram_id) & (Friend.friend_id == friend_id)) |
+            ((Friend.user_id == friend_id) & (Friend.friend_id == telegram_id))
+        )
+    )
+    await db.commit()
+    
+    log.info(f"👥 Friendship removed: {telegram_id} <-> {friend_id}")
+    
+    return {"ok": True, "message": "Friend removed"}
+
+
+@app.post("/api/start-friend-chat")
+async def start_friend_chat(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Start a direct chat with a friend."""
+    tg_user = get_telegram_user(request)
+    telegram_id = tg_user["id"]
+    body = await request.json()
+    
+    friend_id = body.get("friend_id")
+    if not friend_id:
+        raise HTTPException(status_code=400, detail="friend_id required")
+    
+    # Verify friendship exists
+    from sqlalchemy import select
+    from database import Friend
+    
+    result = await db.execute(
+        select(Friend).where(
+            (Friend.user_id == telegram_id) & (Friend.friend_id == friend_id)
+        )
+    )
+    friendship = result.scalar_one_or_none()
+    
+    if not friendship:
+        raise HTTPException(status_code=404, detail="Not friends with this user")
+    
+    # Check if friend is online via Redis
+    online_check = await match_engine.redis.get(f"zephr:user:online:{friend_id}")
+    is_online = bool(online_check)
+    
+    if not is_online:
+        raise HTTPException(status_code=400, detail="Friend is offline. They need to be online to chat.")
+    
+    # Create a friend chat session
+    import uuid
+    session_id = str(uuid.uuid4())
+    
+    # Get friend's name
+    from database import User
+    friend_result = await db.execute(select(User).where(User.id == friend_id))
+    friend_user = friend_result.scalar_one_or_none()
+    
+    # Get current user's name
+    user_result = await db.execute(select(User).where(User.id == telegram_id))
+    current_user = user_result.scalar_one_or_none()
+    
+    # Store session in Redis
+    session_data = {
+        "user1_id": str(telegram_id),
+        "user2_id": str(friend_id),
+        "topic": "Friend Chat",
+        "is_friend_chat": True,
+        "user1_name": current_user.first_name if current_user else "Friend",
+        "user2_name": friend_user.first_name if friend_user else "Friend",
+    }
+    
+    await match_engine.redis.setex(
+        f"zephr:session:{session_id}",
+        3600,  # 1 hour expiry
+        json.dumps(session_data)
+    )
+    
+    # Notify both users via WebSocket
+    from datetime import datetime as dt
+    
+    # Send to user initiating chat
+    await match_engine.redis.publish(
+        f"zephr:user:{telegram_id}",
+        json.dumps({
+            "type": "matched",
+            "session_id": session_id,
+            "peer_anon": friend_user.first_name if friend_user else "Friend",
+            "peer_emoji": "👤",
+            "topic": "Friend Chat",
+        })
+    )
+    
+    # Send to friend
+    await match_engine.redis.publish(
+        f"zephr:user:{friend_id}",
+        json.dumps({
+            "type": "matched",
+            "session_id": session_id,
+            "peer_anon": current_user.first_name if current_user else "Friend",
+            "peer_emoji": "👤",
+            "topic": "Friend Chat",
+        })
+    )
+    
+    log.info(f"👥 Friend chat started: {telegram_id} <-> {friend_id} (session: {session_id})")
+    
+    return {"ok": True, "session_id": session_id, "message": "Chat started"}
 
 
 @app.get("/api/friend-requests/pending")

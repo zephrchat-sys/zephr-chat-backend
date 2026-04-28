@@ -33,8 +33,10 @@ class QueueEntry:
     language: str = "any"
     age_group: str = "any"
     topic: str = "random"
-    gender: str = "any"          # VIP only
-    country: str = "any"         # VIP only
+    gender: str = "any"          # VIP only - FILTER/PREFERENCE (what they want to match with)
+    country: str = "any"         # VIP only - FILTER/PREFERENCE (what they want to match with)
+    user_gender: str = "any"     # User's actual gender (for others to filter)
+    user_country: str = "any"    # User's actual country (for others to filter)
     is_vip: bool = False
     joined_at: float = 0.0
 
@@ -172,15 +174,33 @@ class MatchingEngine:
                 if entry.age_group != candidate["age_group"]:
                     continue
 
-            # VIP gender filter
+            # VIP gender filter - check if candidate's ACTUAL gender matches your preference
             if entry.is_vip and entry.gender != "any":
-                if candidate.get("gender", "any") not in ("any", entry.gender):
+                candidate_actual_gender = candidate.get("user_gender", "any")
+                if candidate_actual_gender != "any" and candidate_actual_gender != entry.gender:
                     continue
 
-            # VIP country filter
+            # VIP country filter - check if candidate's ACTUAL country matches your preference  
             if entry.is_vip and entry.country != "any":
-                if candidate.get("country", "any") not in ("any", entry.country):
+                candidate_actual_country = candidate.get("user_country", "any")
+                if candidate_actual_country != "any" and candidate_actual_country != entry.country:
                     continue
+            
+            # Reverse check: Does candidate's filter match YOUR actual attributes?
+            if candidate.get("is_vip"):
+                # If candidate filtered for gender, check if YOUR gender matches their filter
+                candidate_gender_filter = candidate.get("gender", "any")
+                if candidate_gender_filter != "any":
+                    your_actual_gender = entry.user_gender
+                    if your_actual_gender != "any" and your_actual_gender != candidate_gender_filter:
+                        continue
+                
+                # If candidate filtered for country, check if YOUR country matches their filter
+                candidate_country_filter = candidate.get("country", "any")
+                if candidate_country_filter != "any":
+                    your_actual_country = entry.user_country
+                    if your_actual_country != "any" and your_actual_country != candidate_country_filter:
+                        continue
 
             return candidate
 

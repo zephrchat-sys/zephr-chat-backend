@@ -627,8 +627,12 @@ async def websocket_endpoint(
                     language=msg.get("language", "any"),
                     age_group=msg.get("age_group", "any"),
                     topic=msg.get("topic", "random"),
+                    # VIP filters (what they want to match with)
                     gender=msg.get("gender", "any") if user.is_vip_active() else "any",
                     country=msg.get("country", "any") if user.is_vip_active() else "any",
+                    # User's actual attributes (for others to filter)
+                    user_gender=user.gender or "any",
+                    user_country=user.country or "any",
                     is_vip=user.is_vip_active(),
                 )
 

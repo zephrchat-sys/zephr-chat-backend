@@ -179,6 +179,51 @@ async def get_stats():
     return stats
 
 
+@app.post("/api/activate-trial")
+async def activate_trial(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Activate 3-day VIP trial for user."""
+    from sqlalchemy import select
+    from datetime import datetime, timedelta
+    
+    tg_user = get_telegram_user(request)
+    
+    # Get user from database
+    result = await db.execute(
+        select(User).where(User.id == tg_user["id"])
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if user already had trial
+    if user.had_vip_trial:
+        raise HTTPException(status_code=400, detail="Trial already used")
+    
+    # Check if user already has active VIP
+    if user.vip_expires_at and user.vip_expires_at > datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Already have active VIP")
+    
+    # Activate 3-day trial
+    new_expiry = datetime.utcnow() + timedelta(days=3)
+    user.vip_expires_at = new_expiry
+    user.had_vip_trial = True
+    
+    await db.commit()
+    await db.refresh(user)
+    
+    log.info(f"✅ VIP trial activated via web app for user {user.id} (@{user.username}). Expires: {new_expiry}")
+    
+    return {
+        "ok": True,
+        "vip_expires_at": new_expiry.isoformat(),
+        "message": "3-day VIP trial activated!"
+    }
+
+
 @app.post("/api/auth")
 async def authenticate(
     request: Request,
@@ -268,49 +313,6 @@ async def update_profile(
         await db.commit()
     
     return {"ok": True}
-
-
-@app.post("/api/activate-trial")
-async def activate_trial(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-):
-    """Activate 3-day VIP trial for user."""
-    tg_user = get_telegram_user(request)
-    
-    # Get user from database
-    result = await db.execute(
-        select(User).where(User.id == tg_user.id)
-    )
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Check if user already had trial
-    if user.had_vip_trial:
-        raise HTTPException(status_code=400, detail="Trial already used")
-    
-    # Check if user already has active VIP
-    if user.vip_expires_at and user.vip_expires_at > datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Already have active VIP")
-    
-    # Activate 3-day trial
-    from datetime import timedelta
-    new_expiry = datetime.utcnow() + timedelta(days=3)
-    user.vip_expires_at = new_expiry
-    user.had_vip_trial = True
-    
-    await db.commit()
-    await db.refresh(user)
-    
-    log.info(f"✅ VIP trial activated via web app for user {user.id} (@{user.username}). Expires: {new_expiry}")
-    
-    return {
-        "ok": True,
-        "vip_expires_at": new_expiry.isoformat(),
-        "message": "3-day VIP trial activated!"
-    }
 
 
 @app.post("/api/report")

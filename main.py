@@ -28,6 +28,20 @@ import razorpay_routes
 
 import logging
 logging.basicConfig(level=logging.INFO)
+
+
+# ── Helper Functions ──────────────────────────────────────────────────────────
+def age_to_age_group(age: Optional[int]) -> str:
+    """Convert user's age to age_group for matching."""
+    if age is None:
+        return "any"
+    if 18 <= age <= 24:
+        return "18-24"
+    elif 25 <= age <= 34:
+        return "25-34"
+    elif age >= 35:
+        return "35+"
+    return "any"
 log = logging.getLogger("zephr")
 
 
@@ -633,6 +647,7 @@ async def websocket_endpoint(
                     # User's actual attributes (for others to filter)
                     user_gender=user.gender or "any",
                     user_country=user.country or "any",
+                    user_age_group=age_to_age_group(user.age),
                     is_vip=user.is_vip_active(),
                 )
 

@@ -37,6 +37,7 @@ class QueueEntry:
     country: str = "any"         # VIP only - FILTER/PREFERENCE (what they want to match with)
     user_gender: str = "any"     # User's actual gender (for others to filter)
     user_country: str = "any"    # User's actual country (for others to filter)
+    user_age_group: str = "any"  # User's actual age group (for others to filter)
     is_vip: bool = False
     joined_at: float = 0.0
 
@@ -169,9 +170,17 @@ class MatchingEngine:
                 if entry.language != candidate["language"]:
                     continue
 
-            # Age filter
-            if entry.age_group != "any" and candidate["age_group"] != "any":
-                if entry.age_group != candidate["age_group"]:
+            # Age filter - check if candidate's ACTUAL age group matches your preference
+            if entry.age_group != "any":
+                candidate_actual_age = candidate.get("user_age_group", "any")
+                if candidate_actual_age != "any" and candidate_actual_age != entry.age_group:
+                    continue
+            
+            # Reverse check: Does candidate's age filter match YOUR actual age group?
+            candidate_age_filter = candidate.get("age_group", "any")
+            if candidate_age_filter != "any":
+                your_actual_age = entry.user_age_group
+                if your_actual_age != "any" and your_actual_age != candidate_age_filter:
                     continue
 
             # VIP gender filter - check if candidate's ACTUAL gender matches your preference

@@ -38,15 +38,28 @@ dp.include_router(router)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def main_keyboard() -> InlineKeyboardMarkup:
+    """Main menu keyboard with all key actions"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        # Row 1: Find stranger (primary action)
         [InlineKeyboardButton(
-            text="💬 Open zephr.chat",
+            text="🔍 Find a stranger",
             web_app=WebAppInfo(url=settings.WEBAPP_URL)
         )],
+        # Row 2: Choose topic and Stop chat (coming soon)
         [
-            InlineKeyboardButton(text="👑 Get VIP", callback_data="vip_info"),
-            InlineKeyboardButton(text="❓ Help", callback_data="help"),
+            InlineKeyboardButton(text="📌 Choose topic", callback_data="choose_topic"),
+            InlineKeyboardButton(text="🛑 Stop chat", callback_data="stop_chat"),
         ],
+        # Row 3: VIP and Invite friends
+        [
+            InlineKeyboardButton(text="👑 VIP", callback_data="vip_info"),
+            InlineKeyboardButton(text="🎁 Invite friends", callback_data="invite_friends"),
+        ],
+        # Row 4: Update profile
+        [InlineKeyboardButton(
+            text="👤 Update profile",
+            web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}#profile")
+        )],
     ])
 
 
@@ -138,9 +151,13 @@ async def cmd_start(message: Message):
     name = message.from_user.first_name or "there"
     await message.answer(
         f"👋 Hey <b>{name}</b>! Welcome to <b>zephr.chat</b>\n\n"
-        f"Faster, safer, and more private than any other Telegram stranger chat.\n\n"
-        f"🔒 <b>Zero logs</b> · Chats auto-delete · AI blocks creeps instantly\n\n"
-        f"Tap the button below to start chatting anonymously 👇",
+        f"🚀 The fastest anonymous stranger chat on Telegram\n\n"
+        f"✨ <b>What makes us special:</b>\n"
+        f"• ⚡ Instant matching in &lt;0.5 sec\n"
+        f"• 🔒 Zero logs - chats auto-delete\n"
+        f"• 🛡 AI blocks creeps instantly\n"
+        f"• 🌐 Talk to anyone worldwide\n\n"
+        f"Choose an option below to get started! 👇",
         reply_markup=main_keyboard()
     )
 
@@ -418,6 +435,67 @@ async def vip_payment(callback: CallbackQuery):
 
 
 # ── Back Button ───────────────────────────────────────────────────────────────
+
+# ── Additional Menu Callbacks ────────────────────────────────────────────────
+
+@router.callback_query(F.data == "choose_topic")
+async def choose_topic_callback(callback: CallbackQuery):
+    """Handle Choose Topic button - directs to web app with topic selector"""
+    await callback.answer(
+        "🔍 Opening topic selector...",
+        show_alert=False
+    )
+    # The web app will handle topic selection
+    await callback.message.answer(
+        "📌 <b>Choose Your Chat Topic</b>\n\n"
+        "Select a topic to match with people who share your interests!\n\n"
+        "Tap the button below to open topic selection 👇",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔍 Choose Topic & Start",
+                web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}#topics")
+            )],
+            [InlineKeyboardButton(text="← Back", callback_data="back_main")]
+        ])
+    )
+
+
+@router.callback_query(F.data == "stop_chat")
+async def stop_chat_callback(callback: CallbackQuery):
+    """Handle Stop Chat button"""
+    await callback.answer(
+        "🛑 To stop a chat, use the 'Next' button in the chat screen",
+        show_alert=True
+    )
+
+
+@router.callback_query(F.data == "invite_friends")
+async def invite_friends_callback(callback: CallbackQuery):
+    """Handle Invite Friends button - shows referral link"""
+    async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(db, callback.from_user.id)
+        bot_username = (await bot.get_me()).username
+        link = f"https://t.me/{bot_username}?start=ref_{user.referral_code}"
+        
+        await callback.message.edit_text(
+            f"🎁 <b>Invite Friends, Earn VIP</b>\n\n"
+            f"Share your personal invite link:\n"
+            f"<code>{link}</code>\n\n"
+            f"👥 Friends referred: <b>{user.referral_count}</b>\n"
+            f"🏆 Rewards:\n"
+            f"• Every <b>3 friends</b> = <b>7 days FREE VIP</b>\n"
+            f"• Every <b>10 friends</b> = <b>30 days FREE VIP</b>\n\n"
+            f"💡 Your friends get instant matching when they join!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📤 Share Link",
+                    url=f"https://t.me/share/url?url={link}&text=Join me on zephr.chat - anonymous stranger chat that's fast, safe, and private!"
+                )],
+                [InlineKeyboardButton(text="← Back", callback_data="back_main")]
+            ])
+        )
+        await callback.answer()
+
 
 @router.callback_query(F.data == "back_main")
 async def back_main(callback: CallbackQuery):

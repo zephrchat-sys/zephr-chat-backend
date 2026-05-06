@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     PERSPECTIVE_API_KEY: Optional[str] = None   # Google Perspective API (free)
     TOXICITY_THRESHOLD: float = 0.75            # Block above this score
 
+    # ── AI Bot ────────────────────────────────────────────────
+    ANTHROPIC_API_KEY: Optional[str] = None     # Claude API key for AI bot
+
     # ── Session ───────────────────────────────────────────────
     SESSION_TTL: int = 3600          # 1 hour max chat session
     QUEUE_TTL: int = 300             # 5 min in queue before auto-remove

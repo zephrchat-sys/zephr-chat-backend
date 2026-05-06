@@ -25,6 +25,7 @@ from matching import engine as match_engine, QueueEntry
 from moderation import moderator
 import bot as telegram_bot
 import razorpay_routes
+from bot_manager import bot_manager
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -74,6 +75,12 @@ async def lifespan(app: FastAPI):
     await match_engine.connect()
     await moderator.setup()
     
+    # Start AI Bot Manager
+    await bot_manager.connect()
+    asyncio.create_task(bot_manager.start_bot_queue_maintenance())
+    asyncio.create_task(bot_manager.start_match_monitoring())
+    log.info("🤖 AI Bot Manager started")
+    
     # Start Telegram bot
     if telegram_bot.bot:
         await telegram_bot.setup_bot()
@@ -93,6 +100,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if telegram_bot.bot:
         await telegram_bot.bot.delete_webhook()
+    await bot_manager.disconnect()
     await match_engine.disconnect()
     await moderator.teardown()
     log.info("👋 zephr.chat backend stopped")
